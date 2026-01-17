@@ -16,9 +16,14 @@ mcp = NorthMCPServer(
 )
 
 CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
+TICKETMASTER_API_BASE = "https://app.ticketmaster.com/discovery/v2"
 
 def _get_google_token():
     return os.getenv("ACCESS_TOKEN")
+
+
+# Set your Ticketmaster API key here
+TICKETMASTER_API_KEY = "gpMqpLqs1VDGhY1mgRhT0UOSh1EgHSM1"
 
 
 async def _fetch_calendar_data(access_token: str, url: str, params: dict = None):
@@ -348,6 +353,140 @@ async def firstname_lastname_update_calendar_event(
     )
     
     return format_event_to_document(response)
+
+
+@mcp.tool()
+async def firstname_lastname_search_ticketmaster_events(
+    ctx: Context,
+    keyword: str = None,
+    city: str = None,
+    state: str = None,
+    postal_code: str = None,
+    country_code: str = "US",
+    category: str = None,
+    genre: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    size: int = 10
+):
+    """Search for events on Ticketmaster based on location, category, and preferences
+    Args:
+        ctx: Request context
+        keyword: Search keyword for event name/artist (optional)
+        city: City name (e.g., "Los Angeles", "New York") (optional)
+        state: State code (e.g., "CA", "NY") (optional)
+        postal_code: Postal/ZIP code (optional)
+        country_code: Country code (default: "US") (optional)
+        category: Event category - Music, Sports, Arts & Theatre, Film, Miscellaneous (optional)
+        genre: Event genre - Rock, Pop, Hip-Hop/Rap, Country, Jazz, Classical, etc. (optional)
+        start_date: Start date for events in YYYY-MM-DD format (optional)
+        end_date: End date for events in YYYY-MM-DD format (optional)
+        size: Number of results to return (default: 10, max: 200)
+    Returns:
+        List of matching events from Ticketmaster with details including name, date, venue, and pricing
+    """
+    api_key = TICKETMASTER_API_KEY
+    
+    if not api_key:
+        return {"error": "Ticketmaster API key not set. Please add your API key to TICKETMASTER_API_KEY at the top of simple_calendar.py"}
+    
+    params = {
+        "apikey": api_key,
+        "size": min(size, 200),  # Cap at 200 per API limit
+        "countryCode": country_code
+    }
+    
+    # Add optional search filters
+    if keyword:
+        params["keyword"] = keyword
+    if city:
+        params["city"] = city
+    if state:
+        params["stateCode"] = state
+    if postal_code:
+        params["postalCode"] = postal_code
+    if category:
+        params["classificationName"] = category
+    if genre:
+        params["genreName"] = genre
+    if start_date:
+        params["startDateTime"] = f"{start_date}T00:00:00Z"
+    if end_date:
+        params["endDateTime"] = f"{end_date}T23:59:59Z"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{TICKETMASTER_API_BASE}/events",
+                params=params,
+                timeout=10.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract and format events from the response
+            events = []
+            if "_embedded" in data and "events" in data["_embedded"]:
+                for event in data["_embedded"]["events"]:
+                    # Extract genre and category info
+                    classifications = event.get("classifications", [])
+                    genre_name = None
+                    category_name = None
+                    if classifications:
+                        genre = classifications[0].get("genre", {})
+                        category = classifications[0].get("segment", {})
+                        genre_name = genre.get("name") if genre else None
+                        category_name = category.get("name") if category else None
+                    
+                    # Extract date info
+                    dates_info = event.get("dates", {}).get("start", {})
+                    event_date = dates_info.get("localDate", "N/A")
+                    event_time = dates_info.get("localTime", "")
+                    
+                    # Extract price info
+                    price_info = None
+                    price_ranges = event.get("priceRanges", [])
+                    if price_ranges:
+                        pr = price_ranges[0]
+                        price_info = {
+                            "min": pr.get("min"),
+                            "max": pr.get("max"),
+                            "currency": pr.get("currency", "USD")
+                        }
+                    
+                    event_info = {
+                        "id": event.get("id"),
+                        "name": event.get("name"),
+                        "url": event.get("url"),
+                        "date": event_date,
+                        "time": event_time,
+                        "category": category_name,
+                        "genre": genre_name,
+                        "status": event.get("status", {}).get("code"),
+                        "price_info": price_info,
+                    }
+                    
+                    # Extract venue information
+                    if "_embedded" in event and "venues" in event["_embedded"]:
+                        venue = event["_embedded"]["venues"][0]
+                        event_info["venue"] = {
+                            "name": venue.get("name"),
+                            "city": venue.get("city", {}).get("name"),
+                            "state": venue.get("state", {}).get("stateCode"),
+                            "country": venue.get("country", {}).get("countryCode"),
+                            "address": venue.get("address", {}).get("line1")
+                        }
+                    
+                    events.append(event_info)
+            
+            return {
+                "events": events,
+                "total_returned": len(events),
+                "total_available": data.get("page", {}).get("totalElements", 0)
+            }
+    
+    except httpx.HTTPError as e:
+        return {"error": f"Failed to search Ticketmaster events: {str(e)}"}
 
 
 # Use streamable-http transport to enable streaming responses over HTTP.
