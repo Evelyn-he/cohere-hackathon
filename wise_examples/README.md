@@ -239,6 +239,21 @@ Next we need to use these to get our access token.
 We can now use the google access tokne in our google calendar mcp server.
 You can either add your access token to the top of your <code>simple_calendar.py</code> file as <code>ACCESS_TOKEN=""</code>, or add it to your <code>.env</code> and load it in.
 
+### 5. Set up Ticketmaster API Key
+
+To enable event discovery features, you'll need to get a Ticketmaster API key:
+
+1. Go to [Ticketmaster Developer Console](https://developer.ticketmaster.com/)
+2. Sign up for a free account or log in
+3. Create a new application to get your API key
+4. Add the API key to your <code>.env</code> file:
+   ```
+   TICKETMASTER_API_KEY=your_api_key_here
+   ACCESS_TOKEN=your_google_access_token
+   ```
+
+Once configured, the `firstname_lastname_search_ticketmaster_events` tool will be available to search for events based on keywords, location, and event type.
+
 <br />
 
 ---
