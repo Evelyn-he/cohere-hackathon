@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import Context
 from north_mcp_python_sdk import NorthMCPServer
+ACCESS_TOKEN = "ya29.a0AUMWg_IJgeP16bo6utSPuo1gXBdAbhN1MZHDzeqOr2bHJdslPCiJy4K0yAkpn3KFIbJdZieqkB-8aGrMexYl_GzCfGyCOmoz-HBMr6fjJ0icai9O3xPEFfnSsKavj_5diaHa9H6VOflcw0KbM0ogVMWZuZfCwmzbkcsia0pI3auE0booAwbyBJB8W_XJIWbAcyn10xoaCgYKAcASARUSFQHGX2MixSa52XAddaWIpcBM6hwmvg0206"
 
 load_dotenv()
 
@@ -149,7 +150,7 @@ def format_event_to_document(event):
 
 
 @mcp.tool()
-async def firstname_lastname_list_calendar_events(
+async def cohere_hackathon_list_calendar_events(
     ctx: Context,
     max_results: int = 10,
     time_min: str = None,
@@ -212,7 +213,7 @@ async def firstname_lastname_list_calendar_events(
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before creating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def firstname_lastname_create_calendar_event(
+async def cohere_hackathon_create_calendar_event(
     ctx: Context,
     title: str,
     start_time: str,
@@ -258,7 +259,7 @@ async def firstname_lastname_create_calendar_event(
 
 
 @mcp.tool()
-async def firstname_lastname_get_calendar_event(ctx: Context, event_id: str):
+async def cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
     """Get detailed information about a specific calendar event
     Args:
         ctx: Request context
@@ -278,7 +279,7 @@ async def firstname_lastname_get_calendar_event(ctx: Context, event_id: str):
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before deleting a calendar event (prevents accidental data loss)
 @mcp.tool(annotations={"destructiveHint": True})
-async def firstname_lastname_delete_calendar_event(ctx: Context, event_id: str):
+async def cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
     """Delete a calendar event by ID
     Args:
         ctx: Request context
@@ -299,7 +300,7 @@ async def firstname_lastname_delete_calendar_event(ctx: Context, event_id: str):
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before updating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def firstname_lastname_update_calendar_event(
+async def cohere_hackathon_update_calendar_event(
     ctx: Context,
     event_id: str,
     title: str = None,
