@@ -1,9 +1,11 @@
+import asyncio
 import httpx
 import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import Context
 from north_mcp_python_sdk import NorthMCPServer
-ACCESS_TOKEN = "ya29.a0AUMWg_IJgeP16bo6utSPuo1gXBdAbhN1MZHDzeqOr2bHJdslPCiJy4K0yAkpn3KFIbJdZieqkB-8aGrMexYl_GzCfGyCOmoz-HBMr6fjJ0icai9O3xPEFfnSsKavj_5diaHa9H6VOflcw0KbM0ogVMWZuZfCwmzbkcsia0pI3auE0booAwbyBJB8W_XJIWbAcyn10xoaCgYKAcASARUSFQHGX2MixSa52XAddaWIpcBM6hwmvg0206"
+import datetime
+from typing import List, Tuple, Dict, Optional
 
 load_dotenv()
 
@@ -17,14 +19,12 @@ mcp = NorthMCPServer(
 )
 
 CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
+
+TICKETMASTER_API_KEY = "gpMqpLqs1VDGhY1mgRhT0UOSh1EgHSM1"
 TICKETMASTER_API_BASE = "https://app.ticketmaster.com/discovery/v2"
 
 def _get_google_token():
     return os.getenv("ACCESS_TOKEN")
-
-
-# Set your Ticketmaster API key here
-TICKETMASTER_API_KEY = "gpMqpLqs1VDGhY1mgRhT0UOSh1EgHSM1"
 
 
 async def _fetch_calendar_data(access_token: str, url: str, params: dict = None):
@@ -149,8 +149,273 @@ def format_event_to_document(event):
     }
 
 
+def parse_event_datetime(event) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Parse event start and end datetime from event data.
+    Returns (start_datetime, end_datetime)
+    """
+    dates_info = event.get("dates", {}).get("start", {})
+    date_str = dates_info.get("localDate")
+    time_str = dates_info.get("localTime", "00:00:00")
+    
+    if not date_str:
+        return None, None
+    
+    # Parse start datetime
+    start_datetime = datetime.fromisoformat(f"{date_str}T{time_str}")
+    
+    # Try to get end time, otherwise estimate (assume 3 hour duration)
+    end_info = event.get("dates", {}).get("end", {})
+    end_date_str = end_info.get("localDate")
+    end_time_str = end_info.get("localTime")
+    
+    if end_date_str and end_time_str:
+        end_datetime = datetime.fromisoformat(f"{end_date_str}T{end_time_str}")
+    else:
+        # Estimate end time as 3 hours after start
+        from datetime import timedelta
+        end_datetime = start_datetime + timedelta(hours=3)
+    
+    return start_datetime, end_datetime
+
+def extract_event_details(event) -> Dict:
+    """
+    Extract all relevant details from an event.
+    
+    Returns dict with: name, start_time, end_time, venue_name, venue_address,
+    category, genre, price_min, price_max, currency, presale_start, onsale_start
+    """
+    details = {
+        "name": event.get("name", "N/A"),
+        "url": event.get("url", "N/A")
+    }
+    
+    # Get start and end times
+    start_dt, end_dt = parse_event_datetime(event)
+    details["start_time"] = start_dt.isoformat() if start_dt else "N/A"
+    details["end_time"] = end_dt.isoformat() if end_dt else "N/A"
+    
+    # Get venue information
+    if "_embedded" in event and "venues" in event["_embedded"]:
+        venue = event["_embedded"]["venues"][0]
+        details["venue_name"] = venue.get("name", "N/A")
+        
+        # Build full address
+        address_parts = []
+        if venue.get("address", {}).get("line1"):
+            address_parts.append(venue["address"]["line1"])
+        if venue.get("address", {}).get("line2"):
+            address_parts.append(venue["address"]["line2"])
+        if venue.get("city", {}).get("name"):
+            address_parts.append(venue["city"]["name"])
+        if venue.get("state", {}).get("stateCode"):
+            address_parts.append(venue["state"]["stateCode"])
+        if venue.get("postalCode"):
+            address_parts.append(venue["postalCode"])
+        if venue.get("country", {}).get("countryCode"):
+            address_parts.append(venue["country"]["countryCode"])
+        
+        details["venue_address"] = ", ".join(address_parts) if address_parts else "N/A"
+    else:
+        details["venue_name"] = "N/A"
+        details["venue_address"] = "N/A"
+    
+    # Get category/genre
+    classifications = event.get("classifications", [])
+    if classifications:
+        details["category"] = classifications[0].get("segment", {}).get("name", "N/A")
+        details["genre"] = classifications[0].get("genre", {}).get("name", "N/A")
+        details["subgenre"] = classifications[0].get("subGenre", {}).get("name", "N/A")
+    else:
+        details["category"] = "N/A"
+        details["genre"] = "N/A"
+        details["subgenre"] = "N/A"
+    
+    # Get price information
+    price_ranges = event.get("priceRanges", [])
+    if price_ranges:
+        pr = price_ranges[0]
+        details["price_min"] = pr.get("min", "N/A")
+        details["price_max"] = pr.get("max", "N/A")
+        details["currency"] = pr.get("currency", "USD")
+    else:
+        details["price_min"] = "N/A"
+        details["price_max"] = "N/A"
+        details["currency"] = "N/A"
+    
+    # Get ticket sale information
+    sales = event.get("sales", {})
+    
+    # Public on-sale date
+    public = sales.get("public", {})
+    onsale_start = public.get("startDateTime")
+    details["onsale_start"] = onsale_start if onsale_start else "N/A"
+    details["onsale_end"] = public.get("endDateTime", "N/A")
+    
+    # Presale information
+    presales = sales.get("presales", [])
+    if presales:
+        # Get earliest presale
+        presale_starts = []
+        for presale in presales:
+            if presale.get("startDateTime"):
+                presale_starts.append({
+                    "name": presale.get("name", "Presale"),
+                    "start": presale.get("startDateTime"),
+                    "end": presale.get("endDateTime", "N/A")
+                })
+        details["presales"] = presale_starts
+        details["first_presale_start"] = presale_starts[0]["start"] if presale_starts else "N/A"
+    else:
+        details["presales"] = []
+        details["first_presale_start"] = "N/A"
+    
+    # Sale status
+    details["sale_status"] = sales.get("public", {}).get("startTBD", False)
+    
+    return details
+
+
+def event_falls_within_time_ranges(event, time_ranges: List[Tuple[datetime, datetime]]) -> bool:
+    """
+    Check if event falls completely within any of the specified time ranges.
+    
+    Args:
+        event: Event data from Ticketmaster API
+        time_ranges: List of (start_datetime, end_datetime) tuples
+    
+    Returns:
+        True if event falls completely within at least one time range
+    """
+    event_start, event_end = parse_event_datetime(event)
+    
+    if not event_start or not event_end:
+        return False
+    
+    for range_start, range_end in time_ranges:
+        # Check if event falls completely within this time range
+        if range_start <= event_start and event_end <= range_end:
+            return True
+    
+    return False
+
+async def get_concerts_in_time_ranges(
+    city: str,
+    state_code: str,
+    time_ranges: List[Tuple[datetime, datetime]],
+    genre: str = None
+) -> List[Dict]:
+    """
+    Get concerts that fall completely within specified time ranges.
+    
+    Args:
+        city: City name (e.g., "San Francisco")
+        state_code: Two-letter state code (e.g., "CA")
+        time_ranges: List of (start_datetime, end_datetime) tuples
+        genre: Optional genre filter
+    
+    Returns:
+        List of dictionaries containing event details
+    """
+    if not time_ranges:
+        return []
+
+    # Find the overall min and max dates to query API efficiently
+    all_starts = [start for start, _ in time_ranges]
+    all_ends = [end for _, end in time_ranges]
+    overall_start = min(all_starts)
+    overall_end = max(all_ends)
+    
+    params = {
+        "apikey": TICKETMASTER_API_KEY,
+        "city": city,
+        "stateCode": state_code,
+        "startDateTime": overall_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "endDateTime": overall_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "classificationName": "Music",
+        "sort": "relevance,desc",
+        "size": 20
+    }
+    
+    if genre:
+        params["genreName"] = genre
+    
+    filtered_events = []
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{TICKETMASTER_API_BASE}/events",
+                params=params,
+                timeout=10.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if "_embedded" in data and "events" in data["_embedded"]:
+                events = data["_embedded"]["events"]
+                
+                # Filter events to only those that fall completely within time ranges
+                for event in events:
+                    if event_falls_within_time_ranges(event, time_ranges):
+                        event_details = extract_event_details(event)
+                        filtered_events.append(event_details)
+            
+            return filtered_events
+            
+    except Exception as e:
+        print(f"❌ Error fetching events: {e}")
+        return []
+
+
+async def get_concerts(start_date: datetime, end_date: datetime):
+    
+    # Define your time ranges
+    # time_ranges = [
+    #     (
+    #         start_date,
+    #         end_date
+    #     )
+    # ]
+    time_ranges = [
+        (
+            datetime(2026, 2, 20, 5, 0),   # Feb 20, 5am
+            datetime(2026, 2, 26, 14, 0)   # Feb 26, 2pm
+        ),
+    ]
+    
+    concerts = await get_concerts_in_time_ranges(
+        city="San Francisco",
+        state_code="CA",
+        time_ranges=time_ranges
+    )
+    
+    return concerts
+
 @mcp.tool()
-async def cohere_hackathon_list_calendar_events(
+async def e_h_get_ticketmaster_concerts(
+    start_time: str,
+    end_time: str,
+) -> list:
+    """
+    Given a start date/time and end date/time, this function will check
+    Ticketmaster for any concerts which fall into that timeframe, and
+    return information of those concerts in a dictionary.
+    
+    :param start_time: The start of the range to look for concerts
+    :type start_time: str
+    :param end_time: The end of the range to look for concerts
+    :type end_time: str
+    :return: List
+    :rtype: A list of entries containing information of concerts which fall into the time frame (including price, location, time, venue, etc.)
+    """
+    start_dt = datetime.fromisoformat(start_time)
+    end_dt = datetime.fromisoformat(end_time)
+    return await get_concerts(start_dt, end_dt)
+
+
+@mcp.tool()
+async def e1_h1_cohere_hackathon_list_calendar_events(
     ctx: Context,
     max_results: int = 10,
     time_min: str = None,
@@ -213,7 +478,7 @@ async def cohere_hackathon_list_calendar_events(
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before creating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def cohere_hackathon_create_calendar_event(
+async def e1_h1_cohere_hackathon_create_calendar_event(
     ctx: Context,
     title: str,
     start_time: str,
@@ -259,7 +524,7 @@ async def cohere_hackathon_create_calendar_event(
 
 
 @mcp.tool()
-async def cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
+async def e1_h1_cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
     """Get detailed information about a specific calendar event
     Args:
         ctx: Request context
@@ -279,7 +544,7 @@ async def cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before deleting a calendar event (prevents accidental data loss)
 @mcp.tool(annotations={"destructiveHint": True})
-async def cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
+async def e1_h1_cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
     """Delete a calendar event by ID
     Args:
         ctx: Request context
@@ -300,7 +565,7 @@ async def cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before updating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def cohere_hackathon_update_calendar_event(
+async def e1_h1_cohere_hackathon_update_calendar_event(
     ctx: Context,
     event_id: str,
     title: str = None,
@@ -357,7 +622,7 @@ async def cohere_hackathon_update_calendar_event(
 
 
 @mcp.tool()
-async def firstname_lastname_search_ticketmaster_events(
+async def e1_h1_search_ticketmaster_events(
     ctx: Context,
     keyword: str = None,
     city: str = None,
@@ -495,3 +760,18 @@ async def firstname_lastname_search_ticketmaster_events(
 # improving responsiveness for long-running or large operations.
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
+# async def test_jan_19_schedule():
+#     events = await e1_h1_cohere_hackathon_list_calendar_events(
+#         ctx=None,  # ctx is not used in your function
+#         time_min="2026-01-19T00:00:00Z",
+#         time_max="2026-01-20T00:00:00Z",
+#         max_results=20
+#     )
+
+#     print("\n=== Events on Jan 19 ===")
+#     for event in events["events"]:
+#         print(event["content"])
+#         print("-" * 40)
+
+# if __name__ == "__main__":
+#     asyncio.run(test_jan_19_schedule())
