@@ -176,32 +176,29 @@ def parse_event_datetime(event):
 
 def extract_event_details(event) -> Dict:
     """
-    Extract all relevant details from an event.
-    
-    Returns dict with: name, start_time, end_time, venue_name, venue_address,
-    category, genre, price_min, price_max, currency, presale_start, onsale_start
+    Extract key details from a Ticketmaster event:
+    - Concert start/end times
+    - Public ticket sale start/end times
     """
     details = {
         "name": event.get("name", "N/A"),
         "url": event.get("url", "N/A")
     }
     
-    # Get start and end times
+    # Concert start/end times
     start_dt, end_dt = parse_event_datetime(event)
-    details["start_time"] = start_dt.isoformat() if start_dt else "N/A"
-    details["end_time"] = end_dt.isoformat() if end_dt else "N/A"
+    details["concert_start"] = start_dt.isoformat() if start_dt else "N/A"
+    details["concert_end"] = end_dt.isoformat() if end_dt else "N/A"
     
-    # Get venue information
+    # Venue info
     if "_embedded" in event and "venues" in event["_embedded"]:
         venue = event["_embedded"]["venues"][0]
         details["venue_name"] = venue.get("name", "N/A")
         
-        # Build full address
+        # Full address
         address_parts = []
         if venue.get("address", {}).get("line1"):
             address_parts.append(venue["address"]["line1"])
-        if venue.get("address", {}).get("line2"):
-            address_parts.append(venue["address"]["line2"])
         if venue.get("city", {}).get("name"):
             address_parts.append(venue["city"]["name"])
         if venue.get("state", {}).get("stateCode"):
@@ -210,13 +207,12 @@ def extract_event_details(event) -> Dict:
             address_parts.append(venue["postalCode"])
         if venue.get("country", {}).get("countryCode"):
             address_parts.append(venue["country"]["countryCode"])
-        
         details["venue_address"] = ", ".join(address_parts) if address_parts else "N/A"
     else:
         details["venue_name"] = "N/A"
         details["venue_address"] = "N/A"
     
-    # Get category/genre
+    # Category/genre info
     classifications = event.get("classifications", [])
     if classifications:
         details["category"] = classifications[0].get("segment", {}).get("name", "N/A")
@@ -227,7 +223,7 @@ def extract_event_details(event) -> Dict:
         details["genre"] = "N/A"
         details["subgenre"] = "N/A"
     
-    # Get price information
+    # Price info
     price_ranges = event.get("priceRanges", [])
     if price_ranges:
         pr = price_ranges[0]
@@ -239,35 +235,11 @@ def extract_event_details(event) -> Dict:
         details["price_max"] = "N/A"
         details["currency"] = "N/A"
     
-    # Get ticket sale information
-    sales = event.get("sales", {})
-    
-    # Public on-sale date
-    public = sales.get("public", {})
-    onsale_start = public.get("startDateTime")
-    details["onsale_start"] = onsale_start if onsale_start else "N/A"
-    details["onsale_end"] = public.get("endDateTime", "N/A")
-    
-    # Presale information
-    presales = sales.get("presales", [])
-    if presales:
-        # Get earliest presale
-        presale_starts = []
-        for presale in presales:
-            if presale.get("startDateTime"):
-                presale_starts.append({
-                    "name": presale.get("name", "Presale"),
-                    "start": presale.get("startDateTime"),
-                    "end": presale.get("endDateTime", "N/A")
-                })
-        details["presales"] = presale_starts
-        details["first_presale_start"] = presale_starts[0]["start"] if presale_starts else "N/A"
-    else:
-        details["presales"] = []
-        details["first_presale_start"] = "N/A"
-    
-    # Sale status
-    details["sale_status"] = sales.get("public", {}).get("startTBD", False)
+    # Public ticket sale info
+    public_sale = event.get("sales", {}).get("public", {})
+    details["onsale_start"] = public_sale.get("startDateTime", "N/A")
+    details["onsale_end"] = public_sale.get("endDateTime", "N/A")
+    details["sale_status"] = public_sale.get("startTBD", False)
     
     return details
 
@@ -604,7 +576,6 @@ async def e100_h100_cohere_hackathon_update_calendar_event(
     )
 
     return format_event_to_document(response)
-
 
 @mcp.tool()
 async def e100_h100_search_ticketmaster_events(
