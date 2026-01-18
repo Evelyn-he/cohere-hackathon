@@ -302,7 +302,9 @@ async def get_concerts_in_time_ranges(
     genre: str = None
 ) -> List[Dict]:
     """
-    Get concerts that fall completely within specified time ranges.
+    Get concerts that fall completely within specified time ranges,
+    as well as the times that the tickets for said concerts become
+    available.
     
     Args:
         city: City name (e.g., "San Francisco")
@@ -311,7 +313,9 @@ async def get_concerts_in_time_ranges(
         genre: Optional genre filter
     
     Returns:
-        List of dictionaries containing event details
+        List of dictionaries containing event details (such as when the 
+        concert starts and ends, when ticket sales begin and end, location
+        of the concert, etc.)
     """
     if not time_ranges:
         return []
@@ -330,7 +334,7 @@ async def get_concerts_in_time_ranges(
         "endDateTime": overall_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "classificationName": "Music",
         "sort": "relevance,desc",
-        "size": 15
+        "size": 30
     }
     
     if genre:
@@ -381,7 +385,7 @@ async def get_concerts(start_date: datetime, end_date: datetime, city: str = "To
     return concerts
 
 @mcp.tool()
-async def e_h_get_ticketmaster_concerts(
+async def e100_h100_get_ticketmaster_concerts(
     start_time: str,
     end_time: str,
 ) -> list:
@@ -403,7 +407,7 @@ async def e_h_get_ticketmaster_concerts(
 
 
 @mcp.tool()
-async def e1_h1_cohere_hackathon_list_calendar_events(
+async def e100_h100_cohere_hackathon_list_calendar_events(
     ctx: Context,
     max_results: int = 10,
     time_min: str = None,
@@ -466,53 +470,52 @@ async def e1_h1_cohere_hackathon_list_calendar_events(
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before creating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def e1_h1_cohere_hackathon_create_calendar_event(
+async def e100_h100_cohere_hackathon_create_calendar_event(
     ctx: Context,
     title: str,
     start_time: str,
     end_time: str,
     description: str = "",
     location: str = "",
-    attendees: str = None
+    attendees: str = None,
+    timezone: str = "America/New_York"  # Hardcoded EST
 ):
-    """Create a new calendar event with optional attendees and location
-    Args:
-        ctx: Request context
-        title: Event title/summary
-        start_time: Start time in RFC3339 format (e.g., "2024-01-15T10:00:00Z")
-        end_time: End time in RFC3339 format (e.g., "2024-01-15T11:00:00Z")
-        description: Optional event description
-        location: Optional event location
-        attendees: Comma-separated list of email addresses (e.g., "user1@example.com,user2@example.com")
-    Returns:
-        Created event details with formatted information
+    """
+    Create a new calendar event with optional attendees, location, and reminder.
+    Times are assumed to be in the calendar's timezone (EST).
     """
     token = _get_google_token()
+
+    # Remove 'Z' suffix if present
+    start_time_clean = start_time.rstrip('Z') if start_time.endswith('Z') else start_time
+    end_time_clean = end_time.rstrip('Z') if end_time.endswith('Z') else end_time
+
     event_data = {
         "summary": title,
         "description": description,
-        "start": {"dateTime": start_time, "timeZone": "UTC"},
-        "end": {"dateTime": end_time, "timeZone": "UTC"}
+        "start": {"dateTime": start_time_clean, "timeZone": timezone},
+        "end": {"dateTime": end_time_clean, "timeZone": timezone}
     }
-    
+
     if location:
         event_data["location"] = location
+
     if attendees:
         email_list = [email.strip() for email in attendees.split(",")]
         event_data["attendees"] = [{"email": email} for email in email_list]
-    
+
     response = await _modify_calendar_data(
         token,
         f"{CALENDAR_API_BASE}/calendars/primary/events",
         method="POST",
         json_payload=event_data
     )
-    
+
     return format_event_to_document(response)
 
 
 @mcp.tool()
-async def e1_h1_cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
+async def e100_h100_cohere_hackathon_get_calendar_event(ctx: Context, event_id: str):
     """Get detailed information about a specific calendar event
     Args:
         ctx: Request context
@@ -532,7 +535,7 @@ async def e1_h1_cohere_hackathon_get_calendar_event(ctx: Context, event_id: str)
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before deleting a calendar event (prevents accidental data loss)
 @mcp.tool(annotations={"destructiveHint": True})
-async def e1_h1_cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
+async def e100_h100_cohere_hackathon_delete_calendar_event(ctx: Context, event_id: str):
     """Delete a calendar event by ID
     Args:
         ctx: Request context
@@ -553,7 +556,7 @@ async def e1_h1_cohere_hackathon_delete_calendar_event(ctx: Context, event_id: s
 # destructiveHint=True triggers safety prompts, asking the user to confirm
 # before updating a calendar event (prevents accidental data modifications)
 @mcp.tool(annotations={"destructiveHint": True})
-async def e1_h1_cohere_hackathon_update_calendar_event(
+async def e100_h100_cohere_hackathon_update_calendar_event(
     ctx: Context,
     event_id: str,
     title: str = None,
@@ -561,30 +564,22 @@ async def e1_h1_cohere_hackathon_update_calendar_event(
     end_time: str = None,
     description: str = None,
     location: str = None,
-    attendees: str = None
+    attendees: str = None,
+    timezone: str = "America/New_York"  # Hardcoded EST
 ):
-    """Update an existing calendar event
-    Args:
-        ctx: Request context
-        event_id: The ID of the event to update
-        title: New event title/summary (optional)
-        start_time: New start time in RFC3339 format (optional)
-        end_time: New end time in RFC3339 format (optional)
-        description: New event description (optional)
-        location: New event location (optional)
-        attendees: New comma-separated list of email addresses (optional)
-    Returns:
-        Updated event details with formatted information
+    """
+    Update an existing calendar event.
+    Times are assumed to be in EST if provided.
     """
     token = _get_google_token()
-    
-    # First, get the current event
+
+    # Fetch current event
     current_event = await _fetch_calendar_data(
         token,
         f"{CALENDAR_API_BASE}/calendars/primary/events/{event_id}"
     )
-    
-    # Update only the provided fields
+
+    # Update only provided fields
     if title is not None:
         current_event["summary"] = title
     if description is not None:
@@ -592,25 +587,27 @@ async def e1_h1_cohere_hackathon_update_calendar_event(
     if location is not None:
         current_event["location"] = location
     if start_time is not None:
-        current_event["start"] = {"dateTime": start_time, "timeZone": "UTC"}
+        start_time_clean = start_time.rstrip('Z') if start_time.endswith('Z') else start_time
+        current_event["start"] = {"dateTime": start_time_clean, "timeZone": timezone}
     if end_time is not None:
-        current_event["end"] = {"dateTime": end_time, "timeZone": "UTC"}
+        end_time_clean = end_time.rstrip('Z') if end_time.endswith('Z') else end_time
+        current_event["end"] = {"dateTime": end_time_clean, "timeZone": timezone}
     if attendees is not None:
         email_list = [email.strip() for email in attendees.split(",")]
         current_event["attendees"] = [{"email": email} for email in email_list]
-    
+
     response = await _modify_calendar_data(
         token,
         f"{CALENDAR_API_BASE}/calendars/primary/events/{event_id}",
         method="PUT",
         json_payload=current_event
     )
-    
+
     return format_event_to_document(response)
 
 
 @mcp.tool()
-async def e1_h1_search_ticketmaster_events(
+async def e100_h100_search_ticketmaster_events(
     ctx: Context,
     keyword: str = None,
     city: str = None,
@@ -748,35 +745,3 @@ async def e1_h1_search_ticketmaster_events(
 # improving responsiveness for long-running or large operations.
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
-
-# async def test_jan_19_schedule():
-#     events = await e1_h1_cohere_hackathon_list_calendar_events(
-#         ctx=None,  # ctx is not used in your function
-#         time_min="2026-01-19T00:00:00Z",
-#         time_max="2026-01-20T00:00:00Z",
-#         max_results=20
-#     )
-
-#     print("\n=== Events on Jan 19 ===")
-#     for event in events["events"]:
-#         print(event["content"])
-#         print("-" * 40)
-
-# if __name__ == "__main__":
-#     asyncio.run(test_jan_19_schedule())
-# async def test_ticketmaster_local():
-#     start = datetime.fromisoformat("2026-02-20T05:00:00+00:00")
-#     end = datetime.fromisoformat("2026-03-26T14:00:00+00:00")
-#     city = "Toronto"
-#     state_code = "ON"
-
-#     concerts = await get_concerts(start, end, city, state_code)
-
-#     print(f"\nFound {len(concerts)} concerts:\n")
-#     for c in concerts:
-#         print(c)
-#         print()
-
-
-# if __name__ == "__main__":
-#     asyncio.run(test_ticketmaster_local())
