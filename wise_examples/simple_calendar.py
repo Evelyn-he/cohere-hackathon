@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import Context
 from north_mcp_python_sdk import NorthMCPServer
-import datetime
+from datetime import datetime, timezone, timedelta
 from typing import List, Tuple, Dict, Optional
 
 load_dotenv()
@@ -149,33 +149,29 @@ def format_event_to_document(event):
     }
 
 
-def parse_event_datetime(event) -> Tuple[Optional[datetime], Optional[datetime]]:
-    """
-    Parse event start and end datetime from event data.
-    Returns (start_datetime, end_datetime)
-    """
+def parse_event_datetime(event):
     dates_info = event.get("dates", {}).get("start", {})
     date_str = dates_info.get("localDate")
     time_str = dates_info.get("localTime", "00:00:00")
-    
+
     if not date_str:
         return None, None
-    
-    # Parse start datetime
-    start_datetime = datetime.fromisoformat(f"{date_str}T{time_str}")
-    
-    # Try to get end time, otherwise estimate (assume 3 hour duration)
+
+    start_datetime = datetime.fromisoformat(
+        f"{date_str}T{time_str}"
+    ).replace(tzinfo=timezone.utc)
+
     end_info = event.get("dates", {}).get("end", {})
     end_date_str = end_info.get("localDate")
     end_time_str = end_info.get("localTime")
-    
+
     if end_date_str and end_time_str:
-        end_datetime = datetime.fromisoformat(f"{end_date_str}T{end_time_str}")
+        end_datetime = datetime.fromisoformat(
+            f"{end_date_str}T{end_time_str}"
+        ).replace(tzinfo=timezone.utc)
     else:
-        # Estimate end time as 3 hours after start
-        from datetime import timedelta
         end_datetime = start_datetime + timedelta(hours=3)
-    
+
     return start_datetime, end_datetime
 
 def extract_event_details(event) -> Dict:
@@ -334,7 +330,7 @@ async def get_concerts_in_time_ranges(
         "endDateTime": overall_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "classificationName": "Music",
         "sort": "relevance,desc",
-        "size": 20
+        "size": 15
     }
     
     if genre:
@@ -367,26 +363,18 @@ async def get_concerts_in_time_ranges(
         print(f"❌ Error fetching events: {e}")
         return []
 
-
-async def get_concerts(start_date: datetime, end_date: datetime):
+async def get_concerts(start_date: datetime, end_date: datetime, city: str = "Toronto", state_code: str = "ON"):
     
-    # Define your time ranges
-    # time_ranges = [
-    #     (
-    #         start_date,
-    #         end_date
-    #     )
-    # ]
     time_ranges = [
         (
-            datetime(2026, 2, 20, 5, 0),   # Feb 20, 5am
-            datetime(2026, 2, 26, 14, 0)   # Feb 26, 2pm
+            start_date,
+            end_date
         ),
     ]
     
     concerts = await get_concerts_in_time_ranges(
-        city="San Francisco",
-        state_code="CA",
+        city=city,
+        state_code=state_code,
         time_ranges=time_ranges
     )
     
@@ -409,8 +397,8 @@ async def e_h_get_ticketmaster_concerts(
     :return: List
     :rtype: A list of entries containing information of concerts which fall into the time frame (including price, location, time, venue, etc.)
     """
-    start_dt = datetime.fromisoformat(start_time)
-    end_dt = datetime.fromisoformat(end_time)
+    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
     return await get_concerts(start_dt, end_dt)
 
 
@@ -760,6 +748,7 @@ async def e1_h1_search_ticketmaster_events(
 # improving responsiveness for long-running or large operations.
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
+
 # async def test_jan_19_schedule():
 #     events = await e1_h1_cohere_hackathon_list_calendar_events(
 #         ctx=None,  # ctx is not used in your function
@@ -775,3 +764,19 @@ if __name__ == "__main__":
 
 # if __name__ == "__main__":
 #     asyncio.run(test_jan_19_schedule())
+# async def test_ticketmaster_local():
+#     start = datetime.fromisoformat("2026-02-20T05:00:00+00:00")
+#     end = datetime.fromisoformat("2026-03-26T14:00:00+00:00")
+#     city = "Toronto"
+#     state_code = "ON"
+
+#     concerts = await get_concerts(start, end, city, state_code)
+
+#     print(f"\nFound {len(concerts)} concerts:\n")
+#     for c in concerts:
+#         print(c)
+#         print()
+
+
+# if __name__ == "__main__":
+#     asyncio.run(test_ticketmaster_local())
